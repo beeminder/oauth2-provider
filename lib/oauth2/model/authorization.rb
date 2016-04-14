@@ -3,8 +3,6 @@ module OAuth2
 
     class Authorization
       include Mongoid::Document
-      field :oauth2_resource_owner_type,  :type => String
-      field :oauth2_resource_owner_id,    :type => String
       field :client_id,                   :type => String
       field :scope,                       :type => String
       field :code,                        :type => String

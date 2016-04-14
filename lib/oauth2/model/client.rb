@@ -1,10 +1,7 @@
 module OAuth2
   module Model
-
     class Client
       include Mongoid::Document
-      field :oauth2_client_owner_type,  :type => String
-      field :oauth2_client_owner_id,    :type => Integer
       field :name,                      :type => String
       field :client_id,                 :type => String
       field :client_secret_hash,        :type => String

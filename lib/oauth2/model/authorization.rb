@@ -14,9 +14,9 @@ module OAuth2
       alias :owner  :oauth2_resource_owner
       alias :owner= :oauth2_resource_owner=
 
-      belongs_to :client, :class_name => 'OAuth2::Model::Client'
+      belongs_to :oauth2_client, :class_name => 'OAuth2::Model::Client' #TODO: is this a horrible name? mongoid won't let use use client anymore
 
-      validates_presence_of :client, :owner
+      validates_presence_of :oauth2_client, :owner
 
       validates_uniqueness_of :code,               :scope => :client_id, :allow_nil => true
       validates_uniqueness_of :refresh_token_hash, :scope => :client_id, :allow_nil => true
@@ -51,19 +51,19 @@ module OAuth2
       end
 
       def self.for_response_type(response_type, attributes = {})
-        instance = self.for(attributes[:owner], attributes[:client]) || self.new
+        instance = self.for(attributes[:owner], attributes[:oauth2_client]) || self.new
         instance.owner  = attributes[:owner]
-        instance.client = attributes[:client]
+        instance.oauth2_client = attributes[:oauth2_client]
         case response_type
           when CODE
-            instance.code ||= create_code(attributes[:client])
+            instance.code ||= create_code(attributes[:oauth2_client])
           when TOKEN
             instance.access_token  ||= create_access_token
-            instance.refresh_token ||= create_refresh_token(attributes[:client])
+            instance.refresh_token ||= create_refresh_token(attributes[:oauth2_client])
           when CODE_AND_TOKEN
-            instance.code = create_code(attributes[:client])
+            instance.code = create_code(attributes[:oauth2_client])
             instance.access_token  ||= create_access_token
-            instance.refresh_token ||= create_refresh_token(attributes[:client])
+            instance.refresh_token ||= create_refresh_token(attributes[:oauth2_client])
         end
 
         if attributes[:duration]
@@ -98,7 +98,7 @@ module OAuth2
       end
 
       def generate_code
-        self.code ||= self.class.create_code(client)
+        self.code ||= self.class.create_code(oauth2_  client)
         save && code
       end
 

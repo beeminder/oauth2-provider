@@ -15,7 +15,7 @@ module OAuth2
       end
       
       def client
-        valid? ? @authorization.client : nil
+        valid? ? @authorization.oauth2_client : nil
       end
       
       def owner

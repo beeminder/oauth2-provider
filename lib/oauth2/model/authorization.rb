@@ -119,17 +119,18 @@ module OAuth2
         token = self.class.create_access_token
         hash  = OAuth2.hashify(token)
         loop do
-          legacy = current_legacy_hash
-          update = { '$push' => { 'access_token_hashes' => {
-            '$each' => [legacy, hash].compact, '$slice' => -MAX_ACCESS_TOKENS } } }
-          update['$unset'] = { 'access_token_hash' => '' } if legacy
+          legacy_hash = current_legacy_hash
+          update_doc  = { '$push' => { 'access_token_hashes' => {
+            '$each' => [legacy_hash, hash].compact, '$slice' => -MAX_ACCESS_TOKENS } } }
+          update_doc['$unset'] = { 'access_token_hash' => '' } if legacy_hash
           # Conditional on the legacy value, so concurrent grants can't fold it twice
-          result = self.class.collection.update_one({ '_id' => id, 'access_token_hash' => legacy }, update)
+          result = self.class.collection.update_one({ '_id' => id, 'access_token_hash' => legacy_hash }, update_doc)
           return @access_token = token if result.n == 1
         end
       end
 
-      # Replaces every live token with a new one.
+      # Returns the token this instance already holds in memory, if any.
+      # Otherwise replaces every live token with a new one.
       def generate_access_token
         return access_token if access_token
         return false unless save

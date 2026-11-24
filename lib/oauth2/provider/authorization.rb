@@ -33,7 +33,7 @@ module OAuth2
         end
 
         if @params[RESPONSE_TYPE] =~ /token/
-          @access_token = @model.generate_access_token
+          @access_token = @model.append_access_token
         end
       end
 
@@ -47,14 +47,18 @@ module OAuth2
       end
 
       def grant_access!(options = {})
+        # initialize already minted if the owner had authorized this client;
+        # minting again would leave a live token that nobody ever receives
+        minted_token = @access_token
         @model = Model::Authorization.for_response_type(@params[RESPONSE_TYPE],
           :owner    => @owner,
           :client   => @client,
           :scope    => @scope,
-          :duration => options[:duration])
+          :duration => options[:duration],
+          :mint_access_token => minted_token.nil?)
 
         @code          = @model.code
-        @access_token  = @model.access_token
+        @access_token  = minted_token || @model.access_token
         @refresh_token = @model.refresh_token
         @expires_in    = @model.expires_in
 

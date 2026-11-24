@@ -3,10 +3,16 @@ module OAuth2
 
     class Authorization
       include Mongoid::Document
+
+      MAX_ACCESS_TOKENS = 10
+
       field :client_id,                   :type => String
       field :scope,                       :type => String
       field :code,                        :type => String
       field :access_token_hash,           :type => String
+      # Hashes of the live access tokens, oldest-minted first. Written only by
+      # the atomic updates in append_access_token and generate_access_token.
+      field :access_token_hashes,         :type => Array
       field :refresh_token_hash,          :type => String
       field :expires_at,                  :type => Time
 
@@ -39,7 +45,7 @@ module OAuth2
       def self.create_access_token
         OAuth2.generate_id do |token|
           hash = OAuth2.hashify(token)
-          where({:access_token_hash => hash}).count.zero?
+          self.or({:access_token_hash => hash}, {:access_token_hashes => hash}).count.zero?
         end
       end
 
@@ -54,15 +60,16 @@ module OAuth2
         instance = self.for(attributes[:owner], attributes[:client]) || self.new
         instance.owner  = attributes[:owner]
         instance.client = attributes[:client]
+        mints_token = false
         case response_type
           when CODE
             instance.code ||= create_code(attributes[:client])
           when TOKEN
-            instance.access_token  ||= create_access_token
+            mints_token = true
             instance.refresh_token ||= create_refresh_token(attributes[:client])
           when CODE_AND_TOKEN
             instance.code = create_code(attributes[:client])
-            instance.access_token  ||= create_access_token
+            mints_token = true
             instance.refresh_token ||= create_refresh_token(attributes[:client])
         end
 
@@ -78,14 +85,16 @@ module OAuth2
         end
         instance.owner.oauth2_authorizations += [instance]
         instance.owner.save
-        instance.save && instance
+        return false unless instance.save
+        instance.append_access_token if mints_token && attributes.fetch(:mint_access_token, true)
+        instance
       end
 
       def exchange!
         self.code          = nil
-        self.access_token  = self.class.create_access_token
         self.refresh_token = nil
         save!
+        append_access_token
       end
 
       def expired?
@@ -102,9 +111,35 @@ module OAuth2
         save && code
       end
 
+      # Adds a token alongside the live ones, dropping the oldest past the cap.
+      # A hash still in the legacy field moves into the list in the same update.
+      # It goes just before the new token: the list is normally empty then, and
+      # after a rollback restore the legacy hash is the newest token.
+      def append_access_token
+        token = self.class.create_access_token
+        hash  = OAuth2.hashify(token)
+        loop do
+          legacy_hash = current_legacy_hash
+          update_doc  = { '$push' => { 'access_token_hashes' => {
+            '$each' => [legacy_hash, hash].compact, '$slice' => -MAX_ACCESS_TOKENS } } }
+          update_doc['$unset'] = { 'access_token_hash' => '' } if legacy_hash
+          # Conditional on the legacy value, so concurrent grants can't fold it twice
+          result = self.class.collection.update_one({ '_id' => id, 'access_token_hash' => legacy_hash }, update_doc)
+          return @access_token = token if result.n == 1
+        end
+      end
+
+      # Returns the token this instance already holds in memory, if any.
+      # Otherwise replaces every live token with a new one.
       def generate_access_token
-        self.access_token ||= self.class.create_access_token
-        save && access_token
+        return access_token if access_token
+        return false unless save
+        token  = self.class.create_access_token
+        result = self.class.collection.update_one({ '_id' => id }, {
+          '$set'   => { 'access_token_hashes' => [OAuth2.hashify(token)] },
+          '$unset' => { 'access_token_hash' => '' } })
+        raise Mongoid::Errors::DocumentNotFound.new(self.class, id) if result.n.zero?
+        @access_token = token
       end
 
       def grants_access?(user, *scopes)
@@ -118,6 +153,14 @@ module OAuth2
       def scopes
         scopes = scope ? scope.split(/\s+/) : []
         Set.new(scopes)
+      end
+
+    private
+
+      def current_legacy_hash
+        doc = self.class.collection.find('_id' => id).projection('access_token_hash' => 1).first
+        raise Mongoid::Errors::DocumentNotFound.new(self.class, id) unless doc
+        doc['access_token_hash']
       end
     end
 
